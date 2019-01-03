@@ -56,6 +56,15 @@ bool inMenuAuswahl = true;
 int data[5] = {}; //
 
 
+enum States
+{
+	MENU,
+	FOLLOW,
+	HUMAN_CONTROL,
+	FOLLOW_AND_CHANGE
+
+};
+
 // the setup function runs once when you press reset or power the board
 void setup() {
 
