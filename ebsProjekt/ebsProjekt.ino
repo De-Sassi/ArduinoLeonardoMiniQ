@@ -6,6 +6,7 @@
 
 //
 //#include <IRremoteInt.h>
+#include "States.h"
 #include <IRremote.h>
 #include <Adafruit_NeoPixel.h>
 #include <LiquidCrystal_I2C.h>
@@ -38,11 +39,11 @@
 #define L_IR 13//left ir transmitter pin
 #define R_IR 8//right ir transmitter pin
 
-//Programmnr definieren
-#define FOLLOW_LINE 1
-#define DETECT_OBJECT 2
-#define BOTH 3
-#define BACK_TO_MENU 4
+////Programmnr definieren
+//#define FOLLOW_LINE 1
+//#define DETECT_OBJECT 2
+//#define BOTH 3
+//#define BACK_TO_MENU 4
 
 #define THRESHOLD 550 //For line detection. Below 550 is black line above is wood table (or white paper)
 #define MOTOR_SPEED 45 //min speed that does not cause problems with being stuck
@@ -52,23 +53,17 @@ decode_results results;
 Adafruit_NeoPixel led(1, 10, NEO_GRB + NEO_KHZ800);
 LiquidCrystal_I2C lcd(0x20, 16, 2);
 
-bool inMenuAuswahl = true;
 int data[5] = {}; //
 
 
-enum States
-{
-	MENU,
-	FOLLOW,
-	HUMAN_CONTROL,
-	FOLLOW_AND_CHANGE
+State currentState = MENU;
 
-};
+
 
 // the setup function runs once when you press reset or power the board
 void setup() {
 
-
+	currentState = MENU;
 	Serial.begin(9600);
 	Serial.println("Hello World");
 
@@ -92,7 +87,7 @@ void setup() {
 	digitalWrite(R_IR, HIGH);
 	digitalWrite(L_IR, HIGH);
 
-	irrecv.enableIRIn(); 
+	irrecv.enableIRIn();
 
 	////Interrupt
 	digitalWrite(IR_IN, HIGH); //Enable pullup resistor
@@ -101,7 +96,7 @@ void setup() {
 
 void loop() {
 
-	
+
 	if (irrecv.decode(&results))
 	{
 		Serial.println(results.value);
@@ -110,116 +105,139 @@ void loop() {
 		irrecv.resume();
 
 	}
-
-	int input = convertControllNumber(results.value);
-	if (input != NULL)
+	unsigned long userInput = results.value;
+	State nextState = getNextState(userInput);
+	switch (nextState)
 	{
-		inMenuAuswahl = false;
-	}
-	if (inMenuAuswahl)
-	{
+	case MENU:
+		currentState = MENU;
+		Motor_Control(FORW, 0, FORW, 0);
 		display_Menu();
+		delay(500);
+		break;
+	case FOLLOW:
+		currentState = FOLLOW;
+		Read_Value();
+		follow_line();
+		break;
+	case HUMAN_CONTROL:
+		currentState = HUMAN_CONTROL;
+		directionControl(userInput);
+		break;
+	case FOLLOW_AND_CHANGE:
+		currentState = FOLLOW_AND_CHANGE;
+		Read_Value();
+		follow_line();
+
+		break;
 	}
-	else
-	{
-		
-		if (input == FOLLOW_LINE)
-		{
-	//16582903 1
-			Read_Value();
-			follow_line();
-		}
-		else if (input == DETECT_OBJECT)
-		{
-	//16615543 2
-			lcd.clear();
-			lcd.setCursor(0, 0);
-			lcd.print("controll");
-			delay(1000);
-		}
-		else if (input == BOTH)
-		{
-	//16599223 3
-			lcd.clear();
-			lcd.setCursor(0, 0);
-			lcd.print("BOTH");
-			delay(1000);
-		}
-		else if (input == BACK_TO_MENU)
-		{
-			//16580863 powerbutton
-			inMenuAuswahl = true;
-			results.value = 0;
-			lcd.clear();
-			lcd.setCursor(0, 0);
-			lcd.print("Back to Menue");
-			delay(1000);
-			Motor_Control(FORW, 0, FORW, 0);
-		}
-		else
-		{
-			lcd.clear();
-			lcd.setCursor(0, 0);
-			lcd.print("Unknown Command");
-			delay(1000);
-		}
-
-		
-		
-	}
-
-
-
-
 
 }
 
-int convertControllNumber(unsigned long number)
+
+State convertControllNumber(unsigned long number)
 {
 	if (number == ONE)
 	{
-		return 1;
+		return FOLLOW;
 	}
 	else if (number == TWO)
 	{
-		return 2;
+		return HUMAN_CONTROL;
 	}
 	else if (number == THREE)
 	{
-		return 3;
+		return FOLLOW_AND_CHANGE;
 	}
 	else if (number == POWERBUTTON)
 	{
-		return 4;
+		return MENU;
 	}
-	return NULL;
+	//return currentState;
+	return MENU;
 }
+
+State getNextState(unsigned long controllNumber)
+{
+	//From menu every state is possible
+	//from all other states it is only possible to go back to menu
+	if (currentState != MENU)
+	{
+		if (controllNumber == POWERBUTTON)//used to return to MENU
+		{
+			return MENU;
+		}
+		else
+		{
+			return currentState;
+		}
+	}
+	else
+	{
+		return convertControllNumber(controllNumber);
+	}
+}
+
+
+void turn(unsigned long number)
+{
+	directionControl(number);
+	//continue with line following as soon as  line found again
+	bool line_not_found = true;
+	while (line_not_found)
+	{
+		Read_Value();
+		if (data[2] < THRESHOLD)//line in middle
+		{
+			led.setPixelColor(0, 0, 0, 255);//blau
+			led.show();
+			Motor_Control(FORW, 0, FORW, 0);
+		}
+	}
+}
+
 
 void directionControl(unsigned long number)
 {
 	if (number == VOLPLUS)
 	{
 		//FORWARD
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("forward");
 		Motor_Control(FORW, 45, FORW, 45);
+
 	}
 	else if (number == LEFT)
 	{
 		//left
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("left");
 		Motor_Control(FORW, 45, FORW, 0);
 	}
 	else if (number == RIGHT)
 	{
 		//right
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("right");
 		Motor_Control(FORW, 0, FORW, 45);
 	}
 	else if (number == VOLMINUS)
 	{
 		//backwards
-		Motor_Control(BACK, 45, BACK, 45);
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("backwards");
+		Motor_Control(BACK, 100, BACK, 100);
 	}
 	else if (number == PLAY)
 	{
 		// stop
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("stop");
 		Motor_Control(FORW, 0, FORW, 0);
 	}
 }
@@ -235,6 +253,7 @@ void display_Menu()
 	lcd.print("Menu: Line:1 ");
 	lcd.setCursor(0, 1);
 	lcd.print("Contrl:2 Both:3");
+	led.clear();
 	delay(2000);
 }
 
@@ -309,8 +328,7 @@ void Read_Value(void)//read the five sensors
 
 void follow_line()
 {
-	// Serial.println(data[2]);
-	// delay(1000);
+
 	int r_speed = 0;
 	int l_speed = 0;
 	if ((data[0] < THRESHOLD || data[1] < THRESHOLD) && (data[3] > THRESHOLD || data[4] > THRESHOLD))//left detect black line
@@ -341,10 +359,11 @@ void follow_line()
 		r_speed = MOTOR_SPEED;
 		l_speed = MOTOR_SPEED;
 	}
-	Motor_Control(FORW, r_speed, FORW, l_speed); 
+	Motor_Control(FORW, r_speed, FORW, l_speed);
 	delay(10);
 
 }
+
 
 void Motor_Control(int M1_DIR, int M1_EN, int M2_DIR, int M2_EN)
 {
