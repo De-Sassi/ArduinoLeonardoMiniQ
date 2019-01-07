@@ -1,17 +1,24 @@
 /*
  Name:		ebsProjekt.ino
  Created:	12/12/2018 4:33:07 PM
- Author:	delia
+ Author:	Delia De-Sassi
+ Descripton: Designed for a 2WD MiniQ robot. (Arduino Leonardo)
+			There are 3 possible cases to choose. 
+			1: The robot follows a dark line (best results with black line on white underground. both non reflecting)
+			2: The movement of the robot can be controlled over the remote. the current movment is displayed on the lcd.
+			   Each direction has their own color of the rgb-led
+			3: The robot follows the line. but the direction can be changed over the controll. The robot will turn in the desired direction till
+			 it finds the line again.
+			
+			There is a MEnu. it is only possible to access the diffrent cases from there. 
+			In the Menu there is printed out which button to press on the controller to achieve which case
 */
 
-//
-//#include <IRremoteInt.h>
+
 #include "States.h"
 #include <IRremote.h>
 #include <Adafruit_NeoPixel.h>
 #include <LiquidCrystal_I2C.h>
-
-
 
 
 //remote controll numbers
@@ -27,45 +34,40 @@
 #define THREE 16599223
 #define FOUR 16591063
 
+//Motors
 #define EN1 6//enable the right motor driver port 
 #define IN1 7//direction of the right motor
 #define EN2 5//enable the left motor driver port
 #define IN2 12//direction of the left motor
-
 #define FORW 0//forward
 #define BACK 1//back
-
-#define IR_IN  17//IR receiver pin
+//Infraret
+#define IR_IN 17//IR receiver pin
 #define L_IR 13//left ir transmitter pin
 #define R_IR 8//right ir transmitter pin
 
-////Programmnr definieren
-//#define FOLLOW_LINE 1
-//#define DETECT_OBJECT 2
-//#define BOTH 3
-//#define BACK_TO_MENU 4
-
-#define THRESHOLD 550 //For line detection. Below 550 is black line above is wood table (or white paper)
-#define MOTOR_SPEED 45 //min speed that does not cause problems with being stuck
+//Line_Follow
+#define THRESHOLD 550 //For line detection. Below 550 is black line above is wood table (or white paper).
+						//Needs to be adjusted depending on the enviroment
+#define MOTOR_SPEED 45 //min speed that does not cause problems with being stuck. Can change depending on batteries and
+						// if the robot is plugged in
 
 IRrecv irrecv(IR_IN);
 decode_results results;
 Adafruit_NeoPixel led(1, 10, NEO_GRB + NEO_KHZ800);
 LiquidCrystal_I2C lcd(0x20, 16, 2);
 
-int data[5] = {}; //
-
-
+int data[5] = {}; //Array for detecting the black line
 State currentState = MENU;
 
 
-
-// the setup function runs once when you press reset or power the board
 void setup() {
 
 	currentState = MENU;
-	Serial.begin(9600);
-	Serial.println("Hello World");
+
+	//uncomment to start a serial connection (good for debugging)
+	/*Serial.begin(9600);
+	Serial.println("Hello World");*/
 
 	// Initialize RGB-LED
 	led.begin();
@@ -75,15 +77,12 @@ void setup() {
 	//Initialize LCD-Screen
 	lcd.init();
 	lcd.backlight();
-	lcd.setCursor(0, 0);
-	lcd.print("Hello World");
-	lcd.setCursor(0, 1);
-	lcd.print("second line");
+	display_Menu();
 
+	//Initalize Infraret communication
 	pinMode(L_IR, OUTPUT);//init the left transmitter pin
 	pinMode(R_IR, OUTPUT);//init the right transmitter pin
 	pinMode(IR_IN, INPUT);//init the ir receiver pin <- also for interrupt pin important
-
 	digitalWrite(R_IR, HIGH);
 	digitalWrite(L_IR, HIGH);
 
@@ -96,45 +95,69 @@ void setup() {
 
 void loop() {
 
-
+	//checks for new input from controller
 	if (irrecv.decode(&results))
 	{
-		Serial.println(results.value);
-		lcd.clear();
-		lcd.println(results.value);
+		//uncomment for output of the number transmittet by the controller (Debugging)
+	    //Serial.println(results.value);
+		//lcd.clear();
+		//lcd.println(results.value);
 		irrecv.resume();
 
 	}
-	unsigned long userInput = results.value;
-	State nextState = getNextState(userInput);
+	//unsigned long userInput = results.value;
+	State nextState = getNextState(results.value);
+	
 	switch (nextState)
 	{
 	case MENU:
+
+		if (currentState!=MENU) //only actualizes when it comes from a diffrent state
+		{
+			motor_control(FORW, 0, FORW, 0);
+			display_Menu();
+		}
 		currentState = MENU;
-		Motor_Control(FORW, 0, FORW, 0);
-		display_Menu();
-		delay(500);
 		break;
 	case FOLLOW:
+		if (currentState != FOLLOW)
+		{
+			lcd.clear();
+			lcd.setCursor(0, 0);
+			lcd.print("Follow Line");
+		}
 		currentState = FOLLOW;
-		Read_Value();
+		read_linearray_values();
 		follow_line();
 		break;
 	case HUMAN_CONTROL:
+		if (currentState != HUMAN_CONTROL)
+		{
+			lcd.clear();
+			lcd.setCursor(0, 0);
+			lcd.print("Input direction");
+		}
 		currentState = HUMAN_CONTROL;
-		directionControl(userInput);
+		directionControl(results.value);
 		break;
 	case FOLLOW_AND_CHANGE:
+		if (currentState != FOLLOW_AND_CHANGE)
+		{
+			lcd.clear();
+			lcd.setCursor(0, 0);
+			lcd.print("Turn if you like");
+		}
 		currentState = FOLLOW_AND_CHANGE;
-		Read_Value();
+		read_linearray_values();
 		follow_line();
-
+		turn(results.value);
 		break;
 	}
 
 }
 
-
+///converts the controll number into the possilbe states. 
+///if the number is not an actual state the current state is returned
 State convertControllNumber(unsigned long number)
 {
 	if (number == ONE)
@@ -153,10 +176,10 @@ State convertControllNumber(unsigned long number)
 	{
 		return MENU;
 	}
-	//return currentState;
-	return MENU;
+	return currentState;
 }
 
+///gets the next possible state
 State getNextState(unsigned long controllNumber)
 {
 	//From menu every state is possible
@@ -178,25 +201,37 @@ State getNextState(unsigned long controllNumber)
 	}
 }
 
-
+///Turns the robot in the controler defined direction till it finds the line again.
 void turn(unsigned long number)
 {
+	//TODO: for the backward motion there needs to be choosen a direction randomly to turn
 	directionControl(number);
 	//continue with line following as soon as  line found again
 	bool line_not_found = true;
+
+	//TODO: not tested yet
+	int loopCount = 0;
 	while (line_not_found)
 	{
-		Read_Value();
+		read_linearray_values();
 		if (data[2] < THRESHOLD)//line in middle
 		{
 			led.setPixelColor(0, 0, 0, 255);//blau
 			led.show();
-			Motor_Control(FORW, 0, FORW, 0);
+			motor_control(FORW, 0, FORW, 0);
+			line_not_found = false;
 		}
+		if (loopCount > 1000)
+		{
+			//Exit strategie if the line is not found. 
+			//so the robot can be controlled again by the user
+			break;
+		}
+		loopCount++;
 	}
 }
 
-
+///Changes motor speeds depending on the controller input
 void directionControl(unsigned long number)
 {
 	if (number == VOLPLUS)
@@ -205,7 +240,7 @@ void directionControl(unsigned long number)
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("forward");
-		Motor_Control(FORW, 45, FORW, 45);
+		motor_control(FORW, 45, FORW, 45);
 
 	}
 	else if (number == LEFT)
@@ -214,7 +249,7 @@ void directionControl(unsigned long number)
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("left");
-		Motor_Control(FORW, 45, FORW, 0);
+		motor_control(FORW, 45, FORW, 0);
 	}
 	else if (number == RIGHT)
 	{
@@ -222,7 +257,7 @@ void directionControl(unsigned long number)
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("right");
-		Motor_Control(FORW, 0, FORW, 45);
+		motor_control(FORW, 0, FORW, 45);
 	}
 	else if (number == VOLMINUS)
 	{
@@ -230,7 +265,7 @@ void directionControl(unsigned long number)
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("backwards");
-		Motor_Control(BACK, 100, BACK, 100);
+		motor_control(BACK, 100, BACK, 100);
 	}
 	else if (number == PLAY)
 	{
@@ -238,14 +273,10 @@ void directionControl(unsigned long number)
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("stop");
-		Motor_Control(FORW, 0, FORW, 0);
+		motor_control(FORW, 0, FORW, 0);
 	}
 }
-// USER PIN interrupt (for PIN 17). all PINS are on 3 interrupt vectors. find right vector and lvl
-//PCINT17 -> PCI2  PCIE2
-//PCICR bit 2 to 1
-//PCIF2 becomes set to 1 (PCIFR bit 2)-> MCU will jump to corresponding Interrrupt vector
-//MASK PCMSK2 bit 1 für PCINT17 auf 1
+
 void display_Menu()
 {
 	lcd.clear();
@@ -253,10 +284,69 @@ void display_Menu()
 	lcd.print("Menu: Line:1 ");
 	lcd.setCursor(0, 1);
 	lcd.print("Contrl:2 Both:3");
-	led.clear();
+	led.setPixelColor(0, 0, 0, 0);//no light
+	led.show();
 	delay(2000);
 }
 
+void read_linearray_values(void)//read the five sensors
+{
+	char i;
+	for (i = 0; i < 5; i++)
+	{
+		data[i] = analogRead(i);//store the value read from the sensors
+	}
+}
+
+///sets motor speed depending on where the line is detected
+void follow_line()
+{
+	int r_speed = 0;
+	int l_speed = 0;
+	if ((data[0] < THRESHOLD || data[1] < THRESHOLD) && (data[3] > THRESHOLD || data[4] > THRESHOLD))//left detect black line
+	{
+		led.setPixelColor(0, 0, 255, 0);//grün
+		led.show();
+		r_speed = MOTOR_SPEED;
+		l_speed = 0;
+	}
+	else  if ((data[3] < THRESHOLD || data[4] < THRESHOLD) && (data[0] > THRESHOLD || data[1] > THRESHOLD))//black line in the right
+	{
+		led.setPixelColor(0, 255, 0, 0);//rot
+		led.show();
+		r_speed = 0;
+		l_speed = MOTOR_SPEED;
+	}
+	else if (data[2] < THRESHOLD)//line in middle
+	{
+		led.setPixelColor(0, 0, 0, 255);//blau
+		led.show();
+		r_speed = MOTOR_SPEED;
+		l_speed = MOTOR_SPEED;
+	}
+	else //no defined case. just drive forward
+	{
+		led.setPixelColor(0, 255, 0, 255);//violet
+		led.show();
+		r_speed = MOTOR_SPEED;
+		l_speed = MOTOR_SPEED;
+	}
+	motor_control(FORW, r_speed, FORW, l_speed);
+	delay(10);
+
+}
+
+void motor_control(int M1_DIR, int M1_EN, int M2_DIR, int M2_EN)
+{
+	//////////M1////////////////////////
+	if (M1_DIR == FORW)  digitalWrite(IN1, FORW); else digitalWrite(IN1, BACK);
+	if (M1_EN == 0)       analogWrite(EN1, LOW);  else analogWrite(EN1, M1_EN);
+	///////////M2//////////////////////
+	if (M2_DIR == FORW) digitalWrite(IN2, FORW);  else digitalWrite(IN2, BACK);
+	if (M2_EN == 0)     analogWrite(EN2, LOW);    else analogWrite(EN2, M2_EN);
+}
+
+///Only for debugging. Can be used to controll the motors over a serial connection
 void test_controll_over_serial()
 {
 	//RUN MOTORS
@@ -295,14 +385,15 @@ void test_controll_over_serial()
 			break;
 
 		}
-		Motor_Control(FORW, r_speed, FORW, l_speed);
+		motor_control(FORW, r_speed, FORW, l_speed);
 		delay(2000);
 	}
 }
 
+///only for debugging. Prints on the lcd the Values the linearray reads
 void test_Line()
 {
-	Read_Value();
+	read_linearray_values();
 	lcd.clear();
 	lcd.setCursor(0, 0);
 	lcd.print(data[0]);
@@ -315,62 +406,4 @@ void test_Line()
 	lcd.setCursor(12, 1);
 	lcd.print(data[4]);
 	delay(1000);
-}
-
-void Read_Value(void)//read the five sensors
-{
-	char i;
-	for (i = 0; i < 5; i++)
-	{
-		data[i] = analogRead(i);//store the value read from the sensors
-	}
-}
-
-void follow_line()
-{
-
-	int r_speed = 0;
-	int l_speed = 0;
-	if ((data[0] < THRESHOLD || data[1] < THRESHOLD) && (data[3] > THRESHOLD || data[4] > THRESHOLD))//left detect black line
-	{
-		led.setPixelColor(0, 0, 255, 0);//grün
-		led.show();
-		r_speed = MOTOR_SPEED;
-		l_speed = 0;
-	}
-	else  if ((data[3] < THRESHOLD || data[4] < THRESHOLD) && (data[0] > THRESHOLD || data[1] > THRESHOLD))//black line in the right
-	{
-		led.setPixelColor(0, 255, 0, 0);//rot
-		led.show();
-		r_speed = 0;
-		l_speed = MOTOR_SPEED;
-	}
-	else if (data[2] < THRESHOLD)//line in middle
-	{
-		led.setPixelColor(0, 0, 0, 255);//blau
-		led.show();
-		r_speed = MOTOR_SPEED;
-		l_speed = MOTOR_SPEED;
-	}
-	else
-	{
-		led.setPixelColor(0, 255, 0, 255);//violet
-		led.show();
-		r_speed = MOTOR_SPEED;
-		l_speed = MOTOR_SPEED;
-	}
-	Motor_Control(FORW, r_speed, FORW, l_speed);
-	delay(10);
-
-}
-
-
-void Motor_Control(int M1_DIR, int M1_EN, int M2_DIR, int M2_EN)
-{
-	//////////M1////////////////////////
-	if (M1_DIR == FORW)  digitalWrite(IN1, FORW); else digitalWrite(IN1, BACK);
-	if (M1_EN == 0)       analogWrite(EN1, LOW);  else analogWrite(EN1, M1_EN);
-	///////////M2//////////////////////
-	if (M2_DIR == FORW) digitalWrite(IN2, FORW);  else digitalWrite(IN2, BACK);
-	if (M2_EN == 0)     analogWrite(EN2, LOW);    else analogWrite(EN2, M2_EN);
 }
