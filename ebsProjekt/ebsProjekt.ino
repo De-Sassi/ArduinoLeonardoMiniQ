@@ -49,7 +49,7 @@
 //Line_Follow
 #define THRESHOLD 550 //For line detection. Below 550 is black line above is wood table (or white paper).
 						//Needs to be adjusted depending on the enviroment
-#define MOTOR_SPEED 45 //min speed that does not cause problems with being stuck. Can change depending on batteries and
+#define MOTOR_SPEED 33 //min speed that does not cause problems with being stuck. Can change depending on batteries and
 						// if the robot is plugged in
 
 IRrecv irrecv(IR_IN);
@@ -150,7 +150,11 @@ void loop() {
 		currentState = FOLLOW_AND_CHANGE;
 		read_linearray_values();
 		follow_line();
-		turn(results.value);
+		unsigned long input = results.value;
+		if(turnInput(input))
+		{
+			turn(input);
+		}
 		break;
 	}
 
@@ -206,6 +210,7 @@ void turn(unsigned long number)
 {
 	//TODO: for the backward motion there needs to be choosen a direction randomly to turn
 	directionControl(number);
+	delay(500);
 	//continue with line following as soon as  line found again
 	bool line_not_found = true;
 
@@ -228,6 +233,19 @@ void turn(unsigned long number)
 			break;
 		}
 		loopCount++;
+	}
+}
+
+bool turnInput(unsigned long number)
+{
+
+	if (number == VOLPLUS || number == LEFT || number == RIGHT || number == VOLMINUS || number == PLAY)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
 	}
 }
 
